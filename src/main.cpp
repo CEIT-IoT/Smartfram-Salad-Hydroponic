@@ -8,20 +8,24 @@
 
 #define DHTTYPE DHT22
 
-int RelayFan = 4; // D20
-int RelayPum = 0; // D3
+int RelayPum = 4; // D20
+double PH = 0;    // D3
 int LEDwifi = 2;
 int LEDmqtt = 19;
 int Reset = 16;
 String SWauto;
+#define SensorPin A0        // the pH meter Analog output is connected with the Arduino’s Analog
+unsigned long int avgValue; // Store the average value of the sensor feedback
+float b;
+int buf[10], temp;
 
-float humids[2];
-float temps[2];
+float humids;
+float temps;
 // Initialize DHT sensor.
 // Note that older versions of this library took an optional third parameter to
 // tweak the timings for faster processors.  This parameter is no longer needed
 // as the current DHT reading algorithm adjusts itself to work on faster procs.
-DHT dht[] = {{5, DHTTYPE}, {16, DHTTYPE}};
+DHT dht[] = {{5, DHTTYPE}};
 // Replace the next variables with your SSID/Password combination
 // const char *ssid = "******";
 // const char *password = "*******";
@@ -44,7 +48,6 @@ void setup()
   setup_wifi();
   client.setServer(mqtt_server, mqtt_port);
   client.setCallback(callback);
-  pinMode(RelayFan, OUTPUT);
   pinMode(RelayPum, OUTPUT);
   pinMode(LEDwifi, OUTPUT);
   pinMode(LEDmqtt, OUTPUT);
@@ -93,7 +96,7 @@ void callback(char *topic, byte *message, unsigned int length)
     Serial.print(messageTemp);
     if (messageTemp == "on")
     {
-      
+
       digitalWrite(RelayPum, HIGH);
       Serial.println("\nonpum");
     }
@@ -101,34 +104,6 @@ void callback(char *topic, byte *message, unsigned int length)
     {
       digitalWrite(RelayPum, LOW);
       Serial.println("\noffpum");
-    }
-  }
-  else if (String(topic) == SUB_FAN)
-  {
-    Serial.print("Changing output to :");
-    Serial.print(messageTemp);
-    if (messageTemp == "on")
-    {
-      digitalWrite(RelayFan, HIGH);
-      Serial.println("\non");
-    }
-    else if (messageTemp == "off")
-    {
-      digitalWrite(RelayFan, LOW);
-      Serial.println("\nofffan");
-    }
-  }
-  else if (String(topic) == SUB_AutoSW)
-  {
-    Serial.print("Changing output to :");
-    Serial.print(messageTemp);
-    if (messageTemp == "on")
-    {
-      SWauto = "ON";
-    }
-    else if (messageTemp == "off")
-    {
-      SWauto = "OFF";
     }
   }
 }
@@ -177,7 +152,6 @@ void reconnect()
     {
       // if (client.connect((char*) clientName.c_str()), mqtt_user, mqtt_password)) {
       Serial.println("connected");
-      client.subscribe(SUB_FAN);
       client.subscribe(SUB_PUM);
       client.subscribe(SUB_AutoSW);
       digitalWrite(LEDmqtt, HIGH);
@@ -195,30 +169,6 @@ void reconnect()
   }
 }
 
-void SwAuto(){
-   if (SWauto == "ON")
-    { 
-      Serial.println("Automatic Runing!");
-      int tempsin = (int)temps[0];
-      int tempsout = (int)temps[1];
-      Serial.print("Temperture IN : ");
-      Serial.println(tempsin);
-      Serial.print("Temperture OUT : ");
-      Serial.println(tempsout);
-      if (tempsin >= --tempsout)
-      {
-        Serial.println("Waning....!");
-
-        digitalWrite(RelayPum, HIGH);
-        Serial.print("ONpum");
-        delay(3000);
-        digitalWrite(RelayPum, LOW);
-        Serial.print("OFFpum");
-        
-      }
-    }
-}
-
 void loop()
 {
   if (!client.connected())
@@ -227,47 +177,66 @@ void loop()
   }
   client.loop();
   // resetwifi();
-  SwAuto();
   long now = millis();
   if (now - lastMsg > 60000)
   {
     lastMsg = now;
-    for (int index = 0; index < 2; index++)
-    {
-      humids[index] = dht[index].readHumidity();
-      temps[index] = dht[index].readTemperature();
-    }
-    String Humin = String(humids[0]).c_str();
-    String Temin = String(temps[0]).c_str();
-    String Humout = String(humids[1]).c_str();
-    String Temout = String(temps[1]).c_str();
-    if (isnan(humids[0]))
+    humids = dht[0].readHumidity();
+    temps = dht[0].readTemperature();
+    String Humin = String(humids).c_str();
+    String Temin = String(temps).c_str();
+    if (isnan(humids))
     {
       Serial.println("\nHumindity 1 is not detected");
     }
     else
     {
-      Serial.printf("\nhumid 1: %f", humids[0]);
-      Serial.printf("\ttemp 1: %f", temps[0]);
+      Serial.printf("\nhumid 1: %f", humids);
+      Serial.printf("\ttemp 1: %f", temps);
       data_in = "{\"humidity\":" + Humin + ",\"temperature\":" + Temin + "}";
       Serial.print("\n");
       Serial.print(data_in);
       data_in.toCharArray(msg, (data_in.length() + 1));
-      client.publish(PUB_Topic_in, msg);
+      client.publish(PUB_Topic_DHT, msg);
     }
-    if (isnan(humids[1]))
+    for (int i = 0; i < 10; i++) // Get 10 sample value from the sensor for smooth the value
     {
-      Serial.println("\nHumindity 2 is not detected");
+      buf[i] = analogRead(SensorPin);
+      delay(10);
+    }
+    for (int i = 0; i < 9; i++) // sort the analog from small to large
+    {
+      for (int j = i + 1; j < 10; j++)
+      {
+        if (buf[i] > buf[j])
+        {
+          temp = buf[i];
+          buf[i] = buf[j];
+          buf[j] = temp;
+        }
+      }
+    }
+    avgValue = 0;
+    for (int i = 2; i < 8; i++) // take the average value of 6 center sample
+      avgValue += buf[i];
+    float phValue = (float)avgValue * 5.0 / 1024 / 6; // convert the analog into millivolt
+    phValue = 3.5 * phValue;                          // convert the millivolt into pH value
+
+    if (isnan(phValue))
+    {
+      Serial.println("\nPHSensor 1 is not detected");
     }
     else
     {
-      Serial.printf("\nhumid 2: %f", humids[1]);
-      Serial.printf("\ttemp 2: %f", temps[1]);
-      data_out = "{\"humidity\":" + Humout + ", \"temperature\":" + Temout + "}";
+      Serial.print("    pH:");
+      Serial.print(phValue, 2);
+      Serial.println(" ");
+      String PHSensor = String(phValue, 2).c_str();
+      data_in = "{\"PH\":" + PHSensor + "}";
       Serial.print("\n");
-      Serial.print(data_out);
-      data_out.toCharArray(msg, (data_out.length() + 1));
-      client.publish(PUB_Topic_out, msg);
+      Serial.print(data_in);
+      data_in.toCharArray(msg, (data_in.length() + 1));
+      client.publish(PUB_Topic_PH, msg);
     }
   }
 }
