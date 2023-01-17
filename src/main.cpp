@@ -7,12 +7,13 @@
 #include "config.h"
 
 #define DHTTYPE DHT22
+#define PIN_RESET_BUTTON 10  // Pin 16 + 5V
 
 int RelayPum = 4; // D20
 double PH = 0;    // D3
 int LEDwifi = 2;
 int LEDmqtt = 19;
-int Reset = 16;
+// int Reset = 16;
 String SWauto;
 #define SensorPin A0        // the pH meter Analog output is connected with the Arduino’s Analog
 unsigned long int avgValue; // Store the average value of the sensor feedback
@@ -51,7 +52,8 @@ void setup()
   pinMode(RelayPum, OUTPUT);
   pinMode(LEDwifi, OUTPUT);
   pinMode(LEDmqtt, OUTPUT);
-  pinMode(Reset, INPUT);
+  pinMode(PIN_RESET_BUTTON, INPUT);
+   
   for (auto &sensor : dht)
   {
     sensor.begin();
@@ -109,7 +111,7 @@ void callback(char *topic, byte *message, unsigned int length)
 }
 void resetwifi()
 {
-  if (digitalRead(Reset) == HIGH)
+  if (digitalRead(PIN_RESET_BUTTON) == 0)
   {
     Serial.println("reset wifi and restart...!");
     wm.resetSettings();
@@ -163,7 +165,7 @@ void reconnect()
       Serial.println(" try again in 5 seconds");
       // Wait 5 seconds before retrying
       digitalWrite(LEDmqtt, LOW);
-      // resetwifi();
+      resetwifi();
       delay(5000);
     }
   }
@@ -176,7 +178,8 @@ void loop()
     reconnect();
   }
   client.loop();
-  // resetwifi();
+  // Serial.println(digitalRead(PIN_RESET_BUTTON));
+  resetwifi();
   long now = millis();
   if (now - lastMsg > 60000)
   {
